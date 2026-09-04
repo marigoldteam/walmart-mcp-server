@@ -269,6 +269,20 @@ function buildServer() {
   );
 
   server.registerTool(
+    "get_token_details",
+    {
+      title: "Get Walmart API access levels",
+      description:
+        "Shows which Walmart Marketplace API categories (Orders, Items, Reports, etc.) these credentials are approved for, and at what access level (e.g. view_only, full_access, no_access). Check this before building anything on top of an API category (like Reports) to confirm access is actually granted, rather than discovering a 'no_access' failure later.",
+      inputSchema: {},
+    },
+    async () => {
+      const data = await walmartGet("/token/detail", {});
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
     "list_orders",
     {
       title: "List individual Walmart orders",
