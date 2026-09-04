@@ -96,6 +96,14 @@ function lineQuantity(orderLine) {
   return parseInt(orderLine?.orderLineQuantity?.amount || 0, 10);
 }
 
+// Walmart returns orderDate as epoch millis; fall back to the raw value
+// if it's ever a plain date string instead.
+function formatOrderDate(rawDate) {
+  if (!rawDate) return null;
+  const asNumber = Number(rawDate);
+  return !isNaN(asNumber) ? new Date(asNumber).toISOString() : rawDate;
+}
+
 function buildServer() {
   const server = new McpServer({ name: "walmart-mcp", version: "1.0.0" });
 
@@ -234,6 +242,79 @@ function buildServer() {
           {
             type: "text",
             text: JSON.stringify(response, null, 2),
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "list_orders",
+    {
+      title: "List individual Walmart orders",
+      description:
+        "List individual orders in a date range, with order ID, order date, and line-item detail (SKU, item name, quantity, revenue) - unlike query_sales_by_sku, this is not aggregated, so it's useful for looking up a specific sale rather than a total. Optional sku filter narrows results to orders containing that item.",
+      inputSchema: {
+        date_from: z.string().describe("Start date, YYYY-MM-DD"),
+        date_to: z.string().describe("End date, YYYY-MM-DD"),
+        sku: z.string().optional().describe("Only return orders containing this SKU"),
+        limit: z
+          .number()
+          .optional()
+          .describe("Max orders to return, most recent first. Default 50, max 500."),
+      },
+    },
+    async ({ date_from, date_to, sku, limit }) => {
+      const orders = await fetchAllOrders(date_from, date_to);
+      const cap = Math.min(limit || 50, 500);
+
+      let results = orders.map((o) => {
+        const lines = o?.orderLines?.orderLine || [];
+        const items = lines.map((li) => ({
+          line_number: li?.lineNumber,
+          sku: li?.item?.sku || null,
+          name: li?.item?.productName || null,
+          quantity: lineQuantity(li),
+          revenue: Number(lineRevenue(li).toFixed(2)),
+        }));
+        return {
+          purchase_order_id: o?.purchaseOrderId,
+          customer_order_id: o?.customerOrderId,
+          order_date: formatOrderDate(o?.orderDate),
+          items,
+        };
+      });
+
+      if (sku) {
+        results = results
+          .filter((o) => o.items.some((it) => it.sku === sku))
+          .map((o) => ({ ...o, items: o.items.filter((it) => it.sku === sku) }));
+      }
+
+      // Most recent first
+      results.sort((a, b) => (b.order_date || "").localeCompare(a.order_date || ""));
+
+      const total_matching = results.length;
+      results = results.slice(0, cap);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                channel: "walmart",
+                date_from,
+                date_to,
+                sku_filter: sku || null,
+                total_matching_orders: total_matching,
+                orders_returned: results.length,
+                truncated: total_matching > results.length,
+                orders: results,
+              },
+              null,
+              2
+            ),
           },
         ],
       };
