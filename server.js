@@ -188,10 +188,31 @@ function buildServer() {
     async ({ date_from, date_to }) => {
       const orders = await fetchAllOrders(date_from, date_to);
       const bySku = {};
+      // Diagnostic: any order line where Walmart didn't give us a usable
+      // item.sku gets bucketed under "unknown-sku" below so no revenue is
+      // silently dropped, but we also capture the raw line here so the
+      // actual cause (missing SKU, different field, malformed item, etc.)
+      // is visible instead of the order just disappearing from the report.
+      const missingSkuLines = [];
       for (const o of orders) {
         const lines = o?.orderLines?.orderLine || [];
         for (const li of lines) {
-          const key = li?.item?.sku || "unknown-sku";
+          const rawSku = li?.item?.sku;
+          const key = rawSku || "unknown-sku";
+          if (!rawSku) {
+            const detail = {
+              purchaseOrderId: o?.purchaseOrderId,
+              customerOrderId: o?.customerOrderId,
+              orderLineNumber: li?.lineNumber,
+              rawItem: li?.item ?? null,
+              rawOrderLine: li,
+            };
+            missingSkuLines.push(detail);
+            console.warn(
+              "[query_sales_by_sku] order line missing item.sku:",
+              JSON.stringify(detail)
+            );
+          }
           if (!bySku[key]) {
             bySku[key] = { sku: key, name: li?.item?.productName, units: 0, revenue: 0 };
           }
@@ -202,11 +223,17 @@ function buildServer() {
       const rows = Object.values(bySku)
         .map((r) => ({ ...r, revenue: Number(r.revenue.toFixed(2)) }))
         .sort((a, b) => b.revenue - a.revenue);
+      const response = { channel: "walmart", date_from, date_to, rows };
+      // Only included when something was actually missing, so normal
+      // responses stay clean.
+      if (missingSkuLines.length) {
+        response.missing_sku_order_lines = missingSkuLines;
+      }
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify({ channel: "walmart", date_from, date_to, rows }, null, 2),
+            text: JSON.stringify(response, null, 2),
           },
         ],
       };
