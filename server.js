@@ -158,7 +158,11 @@ function buildServer() {
         sku,
         limit: Math.min(per_page || 50, 200),
       });
-      const items = (data.itemResponse || []).map((it) => ({
+      // Walmart's Items API returns the array under the capitalized key
+      // "ItemResponse". Fall back to the lowercase form just in case, but
+      // ItemResponse is the correct key - this was the source of the bug
+      // where the catalog tool always returned an empty list.
+      const items = (data.ItemResponse || data.itemResponse || []).map((it) => ({
         sku: it.sku,
         name: it.productName,
         price: it.price?.amount,
